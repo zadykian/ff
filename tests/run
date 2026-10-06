@@ -25,9 +25,11 @@ answer() {
     printf '%s\n' "$2" >"$FAKE/api/${1//\//%}"
 }
 
-# pull prints pull request #1 in state $1 into the base $2, its head the commit $3.
+# pull prints pull request #1 in state $1 into the base $2, its head the commit $3 of feat in the
+# repository $4, o/r where it is missing. GitHub has marked it merged, for delete-branch.sh.
 pull() {
-    printf '{"state": "%s", "base": {"ref": "%s"}, "head": {"sha": "%s"}}' "$1" "$2" "$3"
+    printf '{"state": "%s", "merged": true, "base": {"ref": "%s"}, ' "$1" "$2"
+    printf '"head": {"sha": "%s", "ref": "feat", "repo": {"full_name": "%s"}}}' "$3" "${4:-o/r}"
 }
 
 # commit commits in seed, changing the file $1, and pushes the branch $2.
@@ -46,6 +48,7 @@ at() {
 
 # setup starts the case $1 afresh: origin with main and feat, a commit ahead, at $head; work, a
 # checkout of it; and gh's answers for #1, from feat into main, commented by alice, who may push.
+# The repository deletes merged branches, and #2 is into feat.
 setup() {
     name=$1
     export FAKE="$tmp/$name"
@@ -61,12 +64,18 @@ setup() {
     head="$(at feat)"
     answer "repos/o/r/collaborators/alice/permission" '{"user": {"permissions": {"push": true}}}'
     answer "repos/o/r/pulls/1" "$(pull open main "$head")"
+    answer graphql '{"data": {"repository": {"deleteBranchOnMerge": true}}}'
+    answer "repos/o/r/pulls?head=o:feat" '[]'
+    answer "repos/o/r/pulls?base=feat" '[{"number": 2}]'
 }
 
-# run runs fast-forward.sh in work, and report.sh where it fails, as the action does.
+# run runs fast-forward.sh in work, then delete-branch.sh, or report.sh where it fails, as the
+# action does.
 run() {
     if (cd "$FAKE/work" && "$root/fast-forward.sh") >"$FAKE/out" 2>&1; then
         status=0
+        (cd "$FAKE/work" && "$root/delete-branch.sh") >>"$FAKE/out" 2>&1 ||
+            fail "delete-branch.sh failed: $(cat "$FAKE/out")"
     else
         status=1
         (cd "$FAKE/work" && "$root/report.sh") >>"$FAKE/out" 2>&1
@@ -80,6 +89,20 @@ lands() {
     [ ! -f "$FAKE/comment" ] || fail "commented: $(cat "$FAKE/comment")"
 }
 
+# deletes checks that the run deleted feat, having moved #2 onto main.
+deletes() {
+    [ -z "$(at feat)" ] || fail "feat stays: $(cat "$FAKE/out")"
+    grep -qxF "api -X PATCH repos/o/r/pulls/2 -f base=main" "$FAKE/calls" ||
+        fail "#2 is not onto main"
+}
+
+# keeps checks that the run left feat, and #2 into it, warning $* where given.
+keeps() {
+    [ -n "$(at feat)" ] || fail "feat is deleted"
+    ! grep -q "PATCH" "$FAKE/calls" || fail "#2 moved"
+    [ $# = 0 ] || grep -qF -- "::warning::feat stays: $*" "$FAKE/out" || fail "no warning '$*'"
+}
+
 # refuses checks that the run failed with main where it was, and commented $*.
 refuses() {
     [ "$status" = 1 ] || fail "did not fail"
@@ -90,6 +113,31 @@ refuses() {
 setup lands
 run
 lands
+deletes
+
+setup keeps-branches
+answer graphql '{"data": {"repository": {"deleteBranchOnMerge": false}}}'
+run
+lands
+keeps
+
+setup fork
+answer "repos/o/r/pulls/1" "$(pull open main "$head" fork/r)"
+run
+lands
+keeps
+
+setup another-pull
+answer "repos/o/r/pulls?head=o:feat" '[{"number": 3}]'
+run
+lands
+keeps "an open pull request comes from it."
+
+setup moved
+commit more feat
+run
+lands
+keeps "it has moved on from $head."
 
 setup no-push
 main="$(at main)"

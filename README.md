@@ -48,6 +48,21 @@ it fetches its commits and pushes one. It refuses, and comments why on the pull 
 
 The push starts no workflow, so the checks do not run again for a commit they have checked.
 
+## The branch
+
+GitHub deletes a merged pull request's branch, where the repository says to, only after a merge of
+its own. The action does it for the pull requests it lands, as GitHub would, where the repository
+has "Automatically delete head branches" on. It first moves the open pull requests into that
+branch onto the default branch, as GitHub does, since deleting a branch closes them.
+
+It leaves a fork's branch, and warns where it leaves the branch:
+
+- of another open pull request;
+- pushed to since it landed;
+- of a pull request GitHub has not marked merged within a minute.
+
+A failure there leaves the pull request landed, and the job green.
+
 ## The repository's settings
 
 Leave GitHub's own merge methods nothing to merge with:
