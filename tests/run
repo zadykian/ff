@@ -1,0 +1,140 @@
+#!/bin/bash
+# Runs the action's scripts case by case, with a local repository for origin and tests/gh for gh,
+# and checks where main ends and what the pull request is told. It needs git and jq.
+
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+export PATH="$root/tests:$PATH" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
+export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
+export GH_REPO=o/r PR=1 COMMENTER=alice MAIN=main
+export GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=7
+failed=0
+
+# fail reports that the case $name fails, for the reason $*.
+fail() {
+    echo "FAIL $name: $*"
+    failed=1
+}
+
+# answer leaves the JSON $2 as gh's answer for the path $1.
+answer() {
+    printf '%s\n' "$2" >"$FAKE/api/${1//\//%}"
+}
+
+# pull prints pull request #1 in state $1 into the base $2, its head the commit $3.
+pull() {
+    printf '{"state": "%s", "base": {"ref": "%s"}, "head": {"sha": "%s"}}' "$1" "$2" "$3"
+}
+
+# commit commits in seed, changing the file $1, and pushes the branch $2.
+commit() {
+    mkdir -p "$(dirname "seed/$1")"
+    echo "$1" >>"seed/$1"
+    git -C seed add .
+    git -C seed commit -qm "$1"
+    git -C seed push -q origin "HEAD:refs/heads/$2"
+}
+
+# at prints the commit of the branch $1 in origin.
+at() {
+    git -C "$FAKE/origin.git" rev-parse --verify -q "refs/heads/$1" || true
+}
+
+# setup starts the case $1 afresh: origin with main and feat, a commit ahead, at $head; work, a
+# checkout of it; and gh's answers for #1, from feat into main, commented by alice, who may push.
+setup() {
+    name=$1
+    export FAKE="$tmp/$name"
+    export RUNNER_TEMP="$FAKE/temp"
+    mkdir -p "$FAKE/api" "$RUNNER_TEMP"
+    git init -q --bare -b main "$FAKE/origin.git"
+    git clone -q "$FAKE/origin.git" "$FAKE/seed" 2>/dev/null
+    cd "$FAKE"
+    commit README main
+    git -C seed switch -qc feat
+    commit feat feat
+    git clone -q origin.git work
+    head="$(at feat)"
+    answer "repos/o/r/collaborators/alice/permission" '{"user": {"permissions": {"push": true}}}'
+    answer "repos/o/r/pulls/1" "$(pull open main "$head")"
+}
+
+# run runs fast-forward.sh in work, and report.sh where it fails, as the action does.
+run() {
+    if (cd "$FAKE/work" && "$root/fast-forward.sh") >"$FAKE/out" 2>&1; then
+        status=0
+    else
+        status=1
+        (cd "$FAKE/work" && "$root/report.sh") >>"$FAKE/out" 2>&1
+    fi
+}
+
+# lands checks that the run moved main to $head, and commented nothing.
+lands() {
+    [ "$status" = 0 ] || fail "failed: $(cat "$FAKE/out")"
+    [ "$(at main)" = "$head" ] || fail "main is not at feat's head"
+    [ ! -f "$FAKE/comment" ] || fail "commented: $(cat "$FAKE/comment")"
+}
+
+# refuses checks that the run failed with main where it was, and commented $*.
+refuses() {
+    [ "$status" = 1 ] || fail "did not fail"
+    [ "$(at main)" = "$main" ] || fail "main moved"
+    grep -qF -- "$*" "$FAKE/comment" 2>/dev/null || fail "no comment '$*': $(cat "$FAKE/out")"
+}
+
+setup lands
+run
+lands
+
+setup no-push
+main="$(at main)"
+answer "repos/o/r/collaborators/alice/permission" '{"user": {"permissions": {"push": false}}}'
+run
+refuses "@alice cannot push to o/r."
+
+setup closed
+main="$(at main)"
+answer "repos/o/r/pulls/1" "$(pull closed main "$head")"
+run
+refuses "#1 is closed."
+
+setup other-base
+main="$(at main)"
+answer "repos/o/r/pulls/1" "$(pull open dev "$head")"
+run
+refuses "#1 is into dev, not main."
+
+setup behind
+git -C seed switch -q main
+commit later main
+main="$(at main)"
+run
+refuses "#1 does not start from the head of main: rebase it onto main."
+
+setup workflows
+commit .github/workflows/ci.yml feat
+main="$(at main)"
+answer "repos/o/r/pulls/1" "$(pull open main "$(at feat)")"
+run
+refuses "#1 changes .github/workflows, which GITHUB_TOKEN may not push:"
+
+setup push-refused
+printf '#!/bin/sh\necho "a rule refuses it" >&2\nexit 1\n' >origin.git/hooks/pre-receive
+chmod +x origin.git/hooks/pre-receive
+main="$(at main)"
+run
+refuses "a rule refuses it"
+
+setup run-failed
+main="$(at main)"
+rm "$FAKE/api/repos%o%r%pulls%1"
+run
+refuses "\`/ff\` did not move main: The run failed."
+
+[ "$failed" = 0 ] && echo PASS
+exit "$failed"

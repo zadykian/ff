@@ -1,0 +1,26 @@
+name: fast-forward
+
+# Pull requests land on main by fast-forward, through this repository's own action as main has it:
+# an issue_comment event checks out the default branch, never the pull request. A pull request
+# that changes .github/workflows is pushed by hand, `git push origin SHA:main`.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  fast-forward:
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/ff')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # actionlint 1.7.12 refuses `$/`, which zizmor asks for: rhysd/actionlint#711.
+      - uses: ./ # zizmor: ignore[self-repository]

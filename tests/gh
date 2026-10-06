@@ -1,0 +1,42 @@
+#!/bin/bash
+# A stand-in for gh. `gh api [-X METHOD] PATH [-f KEY=VALUE]... [--jq FILTER]` prints the answer
+# that tests/run left for PATH, filtered as gh filters it; a PATCH or a DELETE answers {}. `gh pr
+# comment N --body BODY` leaves BODY in $FAKE/comment. $FAKE/calls logs every call.
+
+set -euo pipefail
+
+printf '%s\n' "$*" >>"$FAKE/calls"
+if [ "$1 $2" = "pr comment" ]; then
+    printf '%s\n' "$5" >"$FAKE/comment"
+    exit 0
+fi
+shift
+method=GET path="" filter=. query=()
+while [ $# -gt 0 ]; do
+    case $1 in
+    -X) method=$2 && shift ;;
+    -f) query+=("$2") && shift ;;
+    --jq) filter=$2 && shift ;;
+    --paginate) ;;
+    *) path=$1 ;;
+    esac
+    shift
+done
+if [ "$method" != GET ]; then
+    echo '{}'
+    exit 0
+fi
+# A GET's fields, but for those that select no answer, are part of its key, in order.
+key=$path
+for field in "${query[@]}"; do
+    case $field in
+    query=* | owner=* | name=* | state=* | per_page=*) ;;
+    *) key+="?$field" ;;
+    esac
+done
+file="$FAKE/api/${key//\//%}"
+[ -f "$file" ] || {
+    echo "gh: no answer for $key" >&2
+    exit 1
+}
+jq -r "$filter" "$file"
