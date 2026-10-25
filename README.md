@@ -52,18 +52,20 @@ The push starts no workflow, so the checks do not run again for a commit they ha
 ## The issues
 
 GitHub closes the issues of a merged pull request, those its description closes, `Closes #12`, and
-those linked to it by hand, only after a merge of its own. The action closes them, as completed,
-for the pull requests it lands: the job needs `issues: write` for it.
+those linked to it by hand, but not after a push with `GITHUB_TOKEN`, as the action's is. The
+action closes them, as completed, for the pull requests it lands: the job needs `issues: write`
+for it.
 
 It warns where it leaves an issue open: of another repository, which `GITHUB_TOKEN` may not close,
 or one GitHub refuses to close. A failure there leaves the pull request landed, and the job green.
 
 ## The branch
 
-GitHub deletes a merged pull request's branch, where the repository says to, only after a merge of
-its own. The action does it for the pull requests it lands, as GitHub would, where the repository
-has "Automatically delete head branches" on. It first moves the open pull requests into that
-branch onto the default branch, as GitHub does, since deleting a branch closes them.
+GitHub deletes a merged pull request's branch, where the repository says to, after a merge of its
+own or a person's push, but not after a push with `GITHUB_TOKEN`, as the action's is. The action
+does it for the pull requests it lands, as GitHub would, where the repository has "Automatically
+delete head branches" on. It first moves the open pull requests into that branch onto the default
+branch, as GitHub does, since deleting a branch closes them.
 
 It leaves a fork's branch, and warns where it leaves the branch:
 

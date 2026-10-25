@@ -1,8 +1,8 @@
 #!/bin/bash
 # Closes the issues of pull request $PR, which fast-forward.sh landed on the default branch: those
-# its description closes, `Closes #N`, and those linked to it by hand. GitHub closes them only after
-# a merge of its own. As GitHub does, it closes them as completed. An issue it leaves open gets a
-# warning.
+# its description closes, `Closes #N`, and those linked to it by hand. GitHub closes them after a
+# merge of its own, but not after a push with GITHUB_TOKEN, as fast-forward.sh's is. As GitHub
+# does, it closes them as completed. An issue it leaves open gets a warning.
 
 set -euo pipefail
 

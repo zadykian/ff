@@ -1,8 +1,9 @@
 #!/bin/bash
 # Deletes the branch of pull request $PR, which fast-forward.sh landed on $MAIN, where $GH_REPO
-# deletes merged pull requests' branches: GitHub does so only after a merge of its own. As GitHub
-# does, it first moves the open pull requests into the branch onto $MAIN, since deleting a branch
-# closes them. A branch it leaves gets a warning.
+# deletes merged pull requests' branches: GitHub does so after a merge of its own or a person's
+# push, but not after a push with GITHUB_TOKEN, as fast-forward.sh's is. As GitHub does, it first
+# moves the open pull requests into the branch onto $MAIN, since deleting a branch closes them. A
+# branch it leaves gets a warning.
 
 set -euo pipefail
 
