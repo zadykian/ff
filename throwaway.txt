@@ -1,0 +1,1 @@
+throw-away: does GitHub delete a hand-pushed pull request's branch?
