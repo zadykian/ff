@@ -26,6 +26,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      issues: write
       pull-requests: write
     steps:
       - uses: zadykian/ff@SHA # vX.Y.Z
@@ -47,6 +48,15 @@ it fetches its commits and pushes one. It refuses, and comments why on the pull 
 - GitHub refuses the push. The comment quotes what git printed.
 
 The push starts no workflow, so the checks do not run again for a commit they have checked.
+
+## The issues
+
+GitHub closes the issues of a merged pull request, those its description closes, `Closes #12`, and
+those linked to it by hand, only after a merge of its own. The action closes them, as completed,
+for the pull requests it lands: the job needs `issues: write` for it.
+
+It warns where it leaves an issue open: of another repository, which `GITHUB_TOKEN` may not close,
+or one GitHub refuses to close. A failure there leaves the pull request landed, and the job green.
 
 ## The branch
 

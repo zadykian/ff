@@ -32,6 +32,18 @@ pull() {
     printf '"head": {"sha": "%s", "ref": "feat", "repo": {"full_name": "%s"}}}' "$3" "${4:-o/r}"
 }
 
+# issue prints the issue $1 of the repository $2, in the state $3, as GraphQL gives it.
+issue() {
+    printf '{"number": %s, "repository": {"nameWithOwner": "%s"}, "state": "%s"}' "$1" "$2" "$3"
+}
+
+# repository prints o/r as GraphQL gives it: it deletes merged branches where $1 is true, and #1
+# closes the issues of the JSON array $2.
+repository() {
+    printf '{"data": {"repository": {"deleteBranchOnMerge": %s, ' "$1"
+    printf '"pullRequest": {"closingIssuesReferences": {"nodes": %s}}}}}' "$2"
+}
+
 # commit commits in seed, changing the file $1, and pushes the branch $2.
 commit() {
     mkdir -p "$(dirname "seed/$1")"
@@ -48,7 +60,8 @@ at() {
 
 # setup starts the case $1 afresh: origin with main and feat, a commit ahead, at $head; work, a
 # checkout of it; and gh's answers for #1, from feat into main, commented by alice, who may push.
-# The repository deletes merged branches, and #2 is into feat.
+# The repository deletes merged branches, #1 closes #4, open, #5, closed, and o/s#6, open, and #2
+# is into feat.
 setup() {
     name=$1
     export FAKE="$tmp/$name"
@@ -64,16 +77,19 @@ setup() {
     head="$(at feat)"
     answer "repos/o/r/collaborators/alice/permission" '{"user": {"permissions": {"push": true}}}'
     answer "repos/o/r/pulls/1" "$(pull open main "$head")"
-    answer graphql '{"data": {"repository": {"deleteBranchOnMerge": true}}}'
+    issues="[$(issue 4 o/r OPEN), $(issue 5 o/r CLOSED), $(issue 6 o/s OPEN)]"
+    answer graphql "$(repository true "$issues")"
     answer "repos/o/r/pulls?head=o:feat" '[]'
     answer "repos/o/r/pulls?base=feat" '[{"number": 2}]'
 }
 
-# run runs fast-forward.sh in work, then delete-branch.sh, or report.sh where it fails, as the
-# action does.
+# run runs fast-forward.sh in work, then close-issues.sh and delete-branch.sh, or report.sh where
+# it fails, as the action does.
 run() {
     if (cd "$FAKE/work" && "$root/fast-forward.sh") >"$FAKE/out" 2>&1; then
         status=0
+        (cd "$FAKE/work" && "$root/close-issues.sh") >>"$FAKE/out" 2>&1 ||
+            fail "close-issues.sh failed: $(cat "$FAKE/out")"
         (cd "$FAKE/work" && "$root/delete-branch.sh") >>"$FAKE/out" 2>&1 ||
             fail "delete-branch.sh failed: $(cat "$FAKE/out")"
     else
@@ -89,6 +105,15 @@ lands() {
     [ ! -f "$FAKE/comment" ] || fail "commented: $(cat "$FAKE/comment")"
 }
 
+# closes checks that the run closed #4 as completed, left #5, closed already, and warned that o/s#6
+# stays open.
+closes() {
+    grep -qxF "api -X PATCH repos/o/r/issues/4 -f state=closed -f state_reason=completed" \
+        "$FAKE/calls" || fail "#4 is not closed"
+    ! grep -qF "issues/5" "$FAKE/calls" || fail "#5 is closed again"
+    grep -qF -- "::warning::o/s#6 stays open" "$FAKE/out" || fail "no warning for o/s#6"
+}
+
 # deletes checks that the run deleted feat, having moved #2 onto main.
 deletes() {
     [ -z "$(at feat)" ] || fail "feat stays: $(cat "$FAKE/out")"
@@ -99,7 +124,7 @@ deletes() {
 # keeps checks that the run left feat, and #2 into it, warning $* where given.
 keeps() {
     [ -n "$(at feat)" ] || fail "feat is deleted"
-    ! grep -q "PATCH" "$FAKE/calls" || fail "#2 moved"
+    ! grep -qF "PATCH repos/o/r/pulls" "$FAKE/calls" || fail "#2 moved"
     [ $# = 0 ] || grep -qF -- "::warning::feat stays: $*" "$FAKE/out" || fail "no warning '$*'"
 }
 
@@ -113,18 +138,28 @@ refuses() {
 setup lands
 run
 lands
+closes
+deletes
+
+setup no-issues
+answer graphql "$(repository true '[]')"
+run
+lands
+! grep -qF "PATCH repos/o/r/issues" "$FAKE/calls" || fail "closed an issue"
 deletes
 
 setup keeps-branches
-answer graphql '{"data": {"repository": {"deleteBranchOnMerge": false}}}'
+answer graphql "$(repository false "$issues")"
 run
 lands
+closes
 keeps
 
 setup fork
 answer "repos/o/r/pulls/1" "$(pull open main "$head" fork/r)"
 run
 lands
+closes
 keeps
 
 setup another-pull
